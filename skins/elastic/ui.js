@@ -82,7 +82,10 @@ function rcube_elastic_ui()
     this.pretty_select = pretty_select;
     this.datepicker_init = datepicker_init;
     this.bootstrap_style = bootstrap_style;
-
+    this.toggle_list_selection = toggle_list_selection;
+    this.get_screen_mode = get_screen_mode;
+    this.is_mobile = is_mobile;
+    this.is_touch = is_touch;
 
     // Detect screen size/mode
     screen_mode();
@@ -390,7 +393,7 @@ function rcube_elastic_ui()
             btn_class = target[0].className + (add_class ? ' ' + add_class : '');
 
         if (!menu_button) {
-            btn_class = $.trim(btn_class.replace('btn-primary', 'primary').replace(/(btn[a-z-]*|button|disabled)/g, ''))
+            btn_class = btn_class.replace('btn-primary', 'primary').replace(/(btn[a-z-]*|button|disabled)/g, '').trim()
             btn_class += ' button' + (!always_active ? ' disabled' : '');
         }
         else if (popup = target.data('popup')) {
@@ -555,7 +558,7 @@ function rcube_elastic_ui()
                 // Add Select button to the list navigation bar
                 if (!button) {
                     button = $('<a>').attr({'class': 'button selection disabled', role: 'button', title: rcmail.gettext('select')})
-                        .on('click', function() { if ($(this).is('.active')) table.toggleClass('withselection'); })
+                        .on('click', function() { UI.toggle_list_selection(this, table.attr('id')); })
                         .append($('<span class="inner">').text(rcmail.gettext('select')));
 
                     if (toolbar.is('.menu')) {
@@ -1492,6 +1495,13 @@ function rcube_elastic_ui()
         }
     };
 
+    function toggle_list_selection(obj, list_id)
+    {
+        if ($(obj).is('.active')) {
+            $('#' + list_id).toggleClass('withselection');
+        }
+    };
+
     /**
      * Handler for some Roundcube core popups
      */
@@ -1558,9 +1568,7 @@ function rcube_elastic_ui()
 
             case 'compose-encrypted':
                 // show the toolbar button for Mailvelope
-                if (args.status) {
-                    $('.toolbar a.encrypt').parent().show();
-                }
+                $('.toolbar a.encrypt').parent().show();
                 break;
 
             case 'compose-encrypted-signed':
@@ -1592,6 +1600,14 @@ function rcube_elastic_ui()
     };
 
     /**
+     *  Get current screen mode
+     */
+    function get_screen_mode()
+    {
+        return mode;
+    };
+
+    /**
      * Window resize handler
      * Does layout reflows e.g. on screen orientation change
      */
@@ -1615,6 +1631,8 @@ function rcube_elastic_ui()
 
         // Hide content frame buttons on small devices (with frame toolbar in parent window)
         $.each(content_buttons, function() { $(this)[mobile ? 'hide' : 'show'](); });
+
+        rcmail.triggerEvent('skin-resize', { mode: mode })
     };
 
     function screen_resize()
@@ -2114,7 +2132,7 @@ function rcube_elastic_ui()
                     button = cloned ? create_cloned_button($(button), true, 'hidden-big hidden-large') : $(button).detach();
 
                 // Remove empty text nodes that break alignment of text of the menu item
-                button.contents().filter(function() { if (this.nodeType == 3 && !$.trim(this.nodeValue).length) $(this).remove(); });
+                button.contents().filter(function() { if (this.nodeType == 3 && this.nodeValue.trim().length == 0) $(this).remove(); });
 
                 if (button.is('.spacer')) {
                     item.addClass('spacer');
@@ -2474,6 +2492,11 @@ function rcube_elastic_ui()
             var fn, pos,
                 content = $('ul', p.obj).first(),
                 target = p.props && p.props.link ? p.props.link : p.originalEvent.target;
+
+            // Sanity check, make sure we have some content to show
+            if (!content.length) {
+                return;
+            }
 
             if ($(target).is('span')) {
                 target = $(target).parents('a,li')[0];
@@ -2959,7 +2982,7 @@ function rcube_elastic_ui()
 
                     if (txt) {
                         txt = txt.replace('<' + contact + '>', '');
-                        contact = '"' + $.trim(txt) + '" <' + contact + '>';
+                        contact = '"' + txt.trim() + '" <' + contact + '>';
                     }
 
                     return rcmail.command('add-contact', contact, this, e.originalEvent);
@@ -3121,9 +3144,6 @@ function rcube_elastic_ui()
     function recipient_input(obj)
     {
         var list, input, selection = '',
-            input_len_update = function() {
-                input.css('width', Math.max(5, input.val().length * 15 + 10));
-            },
             apply_func = function() {
                 // update the original input
                 $(obj).val(list.text() + input.val());
@@ -3169,12 +3189,11 @@ function rcube_elastic_ui()
 
                 input.val(result.text);
                 apply_func();
-                input_len_update();
 
                 return result.recipients.length > 0;
             },
-            parse_func = function(e) {
-                var paste, value = this.value;
+            parse_func = function(e, ac) {
+                var last, paste, value = this.value;
 
                 // On paste the text is not yet in the input we have to use clipboard.
                 // Also because on paste new-line characters are replaced by spaces (#6460)
@@ -3184,6 +3203,16 @@ function rcube_elastic_ui()
                     // insert pasted text in place of the selection (or just cursor position)
                     value = value.substring(0, this.selectionStart) + paste + value.substring(this.selectionEnd);
                     e.preventDefault();
+                }
+                // #7231: When clicking on autocompletion list a change event
+                // is fired twice. We have to remove last recipient box if it is
+                // the same recpient (with incomplete email address).
+                // FIXME: Anyone with a better solution?
+                else if (ac) {
+                    last = list.find('li.recipient').last();
+                    if (last.length && this.value.indexOf(last.text().replace(/[ ,]+$/, '')) > -1) {
+                        last.remove();
+                    }
                 }
 
                 update_func(value);
@@ -3195,29 +3224,39 @@ function rcube_elastic_ui()
                     apply_func();
                     return false;
                 }
-                // Here we add a recipient box when the separator (,;) or Enter was pressed
-                else if (e.key == ',' || e.key == ';' || (e.key == 'Enter' && !rcmail.ksearch_visible())) {
+                // Here we add a recipient box when the separator (,;\s) or Enter was pressed,
+                else if (e.key == ' ' || e.key == ',' || e.key == ';' || (e.key == 'Enter' && !rcmail.ksearch_visible())) {
                     if (update_func()) {
                         return false;
                     }
                 }
-
-                input_len_update();
             };
 
         // Create the input element and "editable" area
         input = $('<input>').attr({type: 'text', tabindex: $(obj).attr('tabindex')})
             .on('paste change', parse_func)
-            .on('input', input_len_update) // only to fix input length after paste
             .on('keydown', keydown_func)
             .on('blur', function() { list.removeClass('focus'); })
             .on('focus mousedown', function() { list.addClass('focus'); });
 
         list = $('<ul>').addClass('form-control recipient-input ac-input rounded-left')
-            .append($('<li>').append(input))
+            .append($('<li class="input">').append(input))
             // "selection" hack to allow text selection in the recipient box or multiple boxes (#7129)
             .on('mouseup', function () { selection = window.getSelection().toString(); })
-            .on('click', function() { if (!selection.length) input.focus(); });
+            .on('click', function() { if (!selection.length) input.focus(); })
+            .sortable({
+                appendTo: document.body,
+                items: "> .recipient",
+                connectWith: '.recipient-input',
+                receive: function(event, ui) {
+                    var recipient = list.text();
+                    list.find('.recipient').remove();
+                    update_func(recipient);
+                    if (ui.sender) {
+                        ui.sender.find('input').change();
+                    }
+                }
+            });
 
         // Hide the original input/textarea
         // Note: we do not remove the original element, and we do not use
@@ -3247,7 +3286,7 @@ function rcube_elastic_ui()
     function recipient_input_parser(text)
     {
         // support new-line as a separator, for paste action (#6460)
-        text = $.trim(text.replace(/[,;\s]*[\r\n]+/g, ','));
+        text = text.replace(/[,;\s]*[\r\n]+/g, ',').trim();
 
         var recipients = [],
             address_rx_part = '(\\S+|("[^"]+"))@\\S+',
@@ -3258,16 +3297,31 @@ function rcube_elastic_ui()
 
         $.each(matches || [], function() {
             if (this.length && (recipient_rx1.test(this) || recipient_rx2.test(this))) {
-                var email = RegExp.$1,
-                    name = $.trim(this.replace(email, ''));
+                var email, str = this;
 
-                recipients.push({
-                    name: name,
-                    email: email.replace(/(^<|>$)/g, ''),
-                    text: this
-                });
+                text = text.replace(str, '');
 
-                text = text.replace(this, '');
+                // Support space-separated email addresses
+                while (str.length && str.indexOf(RegExp.$1) === 0) {
+                    email = RegExp.$1;
+                    recipients.push({
+                        name: '',
+                        email: email.replace(/(^<|>$)/g, '')
+                    });
+
+                    str = str.replace(email, '').trim();
+                    if (!recipient_rx1.test(str) && !recipient_rx2.test(str)) {
+                        break;
+                    }
+                }
+
+                if (email != RegExp.$1) {
+                    email = RegExp.$1;
+                    recipients.push({
+                        name: str.replace(email, '').trim(),
+                        email: email.replace(/(^<|>$)/g, '')
+                    });
+                }
             }
         });
 
@@ -3741,37 +3795,40 @@ function rcube_elastic_ui()
      */
     function textarea_autoresize_init(textarea)
     {
-        var resize = function(e) {
-            clearTimeout(env.textarea_timer);
-            env.textarea_timer = setTimeout(function() {
-                var area = $(e.target),
-                    initial_height = area.data('initial-height'),
-                    scroll_height = area[0].scrollHeight;
-
-                // do nothing when the area is hidden
-                if (!scroll_height) {
+        var padding = parseInt($(textarea).css('padding-top')) + parseInt($(textarea).css('padding-bottom')) + 2,
+            // FIXME: Is there a better way to get initial height of the textarea?
+            //        At this moment clientHeight/offsetHeight is 0.
+            min_height = ($(textarea)[0].rows || 5) * 21,
+            resize = function(e) {
+                if (this.scrollHeight - padding <= min_height) {
                     return;
                 }
 
-                if (!initial_height) {
-                    area.data('initial-height', initial_height = scroll_height);
+                // To fix scroll-jump issue in Edge we'll find the scrolling parent
+                // and re-apply scrollTop value after we reset textarea height
+                var scroll_element, scroll_pos = 0;
+                $(e.target).parents().each(function() {
+                    if (this.scrollTop > 0) {
+                        scroll_element = this;
+                        scroll_pos = this.scrollTop;
+                        return false;
+                    }
+                });
+
+                var oldHeight = $(this).outerHeight();
+                $(this).outerHeight(0);
+                var newHeight = Math.max(min_height, this.scrollHeight);
+                $(this).outerHeight(oldHeight);
+                if (newHeight !== oldHeight) {
+                    $(this).height(newHeight);
                 }
 
-                // strange effect in Chrome/Firefox when you delete a line in the textarea
-                // the scrollHeight is not decreased by the line height, but by 2px
-                // so jumps up many times in small steps, we'd rather use one big step
-                if (area.outerHeight() - scroll_height == 2) {
-                    scroll_height -= 19; // 21px is the assumed line height
+                if (scroll_pos) {
+                    scroll_element.scrollTop = scroll_pos;
                 }
+            };
 
-                area.outerHeight(Math.max(initial_height, scroll_height));
-            }, 10);
-        };
-
-        $(textarea).css('overflow-y', 'hidden').on('input', resize).trigger('input');
-
-        // Make sure the height is up-to-date also in time intervals
-        setInterval(function() { $(textarea).trigger('input'); }, 1000);
+        $(textarea).on('input', resize).trigger('input');
     };
 
     // Inititalizes smart list input
@@ -3787,7 +3844,7 @@ function rcube_elastic_ui()
 
         // add input rows
         $.each(list, function(i, v) {
-            smart_field_row_add($('.content', area), v, field.name, i, $(field).data('size'));
+            smart_field_row_add($('.content', area), v, i, field);
         });
 
         area.attr('id', id);
@@ -3813,28 +3870,26 @@ function rcube_elastic_ui()
         }
     };
 
-    function smart_field_row_add(area, value, name, idx, size, after)
+    function smart_field_row_add(area, value, idx, field, after)
     {
         // build row element content
-        var input, elem = $('<div class="input-group">'
+        var input,
+            elem = $('<div class="input-group">'
                 + '<input type="text" class="form-control">'
                 + '<span class="input-group-append"><a class="icon reset input-group-text" href="#"></a></span>'
-                + '</div>'),
-            attrs = {value: value, name: name + '[]'};
+                + '</div>');
 
-        if (size) {
-            attrs.size = size;
-        }
-
-        input = $('input', elem).attr(attrs)
+        input = elem.find('input').attr({
+                value: value,
+                name: field.name + '[]',
+                size: $(field).data('size'),
+                title: field.title,
+                placeholder: field.placeholder
+            })
             .keydown(function(e) {
-                var input = $(this);
-
                 // element creation event (on Enter)
                 if (e.which == 13) {
-                    var name = input.attr('name').replace(/\[\]$/, ''),
-                        dt = (new Date()).getTime(),
-                        elem = smart_field_row_add(area, '', name, dt, size, input.parent());
+                    var elem = smart_field_row_add(area, '', (new Date()).getTime(), field, input.parent());
 
                     $('input', elem).focus();
                 }
@@ -3858,7 +3913,7 @@ function rcube_elastic_ui()
             });
 
         // element deletion event
-        $('a.reset', elem).click(function() {
+        elem.find('a.reset').click(function() {
             var record = $(this.parentNode.parentNode);
 
             if (area.children().length > 1) {
@@ -3870,7 +3925,7 @@ function rcube_elastic_ui()
             }
         });
 
-        $(elem).find('input,a')
+        elem.find('input,a')
             .on('focus', function() { area.addClass('focused'); })
             .on('blur', function() { area.removeClass('focused'); });
 
@@ -3895,7 +3950,7 @@ function rcube_elastic_ui()
 
         // add input rows
         $.each(list, function(i, v) {
-            smart_field_row_add(area, v, field.name, i, $(field).data('size'));
+            smart_field_row_add(area, v, i, field);
         });
     };
 

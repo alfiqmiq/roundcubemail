@@ -952,7 +952,12 @@ function rcmail_write_compose_attachments(&$message, $bodyIsHtml, &$message_body
             $messages[] = $part->mime_id;
         }
 
-        if ($part->disposition == 'attachment' || ($part->disposition == 'inline' && $bodyIsHtml) || $part->filename) {
+        if (
+            $part->disposition == 'attachment'
+            || ($part->disposition == 'inline' && $bodyIsHtml)
+            || $part->filename
+            || $part->mimetype == 'message/rfc822'
+        ) {
             // skip parts that aren't valid attachments
             if ($part->ctype_primary == 'multipart' || $part->mimetype == 'application/ms-tnef') {
                 continue;
@@ -977,8 +982,9 @@ function rcmail_write_compose_attachments(&$message, $bodyIsHtml, &$message_body
 
             $replace = null;
 
-            // skip inline images when not used in the body
-            if ($part->disposition == 'inline') {
+            // Skip inline images when not used in the body
+            // Note: Apple Mail sends PDF files marked as inline (#7382)
+            if ($part->disposition == 'inline' && $part->mimetype != 'application/pdf') {
                 if (!$bodyIsHtml) {
                     continue;
                 }
@@ -1036,7 +1042,7 @@ function rcmail_cid_map($message)
                 }
             }
 
-            $url = sprintf('RCMAP%s', md5($message->folder . '/' . $message->uid));
+            $url = sprintf('RCMAP%s', md5($message->folder . '/' . $message->uid . '/' . $pid));
             $idx = $part->content_id ? ('cid:' . $part->content_id) : $part->content_location;
 
             $map[$idx] = $url;

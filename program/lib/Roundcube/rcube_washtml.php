@@ -548,9 +548,6 @@ class rcube_washtml
                 break;
 
             case XML_CDATA_SECTION_NODE:
-                $dump .= $node->nodeValue;
-                break;
-
             case XML_TEXT_NODE:
                 $dump .= htmlspecialchars($node->nodeValue, ENT_COMPAT | ENT_HTML401 | ENT_SUBSTITUTE, $this->config['charset']);
                 break;
@@ -595,7 +592,11 @@ class rcube_washtml
         $method       = $this->is_xml ? 'loadXML' : 'loadHTML';
 
         // DOMDocument does not support HTML5, try Masterminds parser if available
-        if (!$this->is_xml && class_exists('Masterminds\HTML5')) {
+        if (!$this->is_xml && class_exists('Masterminds\HTML5')
+            // HTML5 parser is slow with content that contains a lot of tags
+            // disable it for such cases (https://github.com/Masterminds/html5-php/issues/181)
+            && substr_count($html, '<') < 10000
+        ) {
             try {
                 $html5 = new Masterminds\HTML5();
                 $node  = $html5->loadHTML($this->fix_html5($html));

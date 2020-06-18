@@ -12,3 +12,10 @@ ALTER TABLE `dictionary` CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicod
 ALTER TABLE `searches` CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 ALTER TABLE `filestore` CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 ALTER TABLE `system` CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+ALTER TABLE `users` CHANGE `username` `username` varchar(128) BINARY NOT NULL;
+ALTER TABLE `cache` CHANGE `cache_key` `cache_key` varchar(128) BINARY NOT NULL;
+ALTER TABLE `cache_shared` CHANGE `cache_key` `cache_key` varchar(255) BINARY NOT NULL;
+ALTER TABLE `cache_index` CHANGE `mailbox` `mailbox` varchar(255) BINARY NOT NULL;
+ALTER TABLE `cache_thread` CHANGE `mailbox` `mailbox` varchar(255) BINARY NOT NULL;
+ALTER TABLE `cache_messages` CHANGE `mailbox` `mailbox` varchar(255) BINARY NOT NULL;

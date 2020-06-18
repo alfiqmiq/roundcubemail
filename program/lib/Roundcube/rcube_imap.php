@@ -370,9 +370,9 @@ class rcube_imap extends rcube_storage
     /**
      * Returns the IMAP server's capability.
      *
-     * @param   string  $cap Capability name
+     * @param string $cap Capability name
      *
-     * @return  mixed   Capability value or TRUE if supported, FALSE if not
+     * @return mixed Capability value or TRUE if supported, FALSE if not
      */
     public function get_capability($cap)
     {
@@ -1900,8 +1900,11 @@ class rcube_imap extends rcube_storage
         }
 
         // Check internal cache
-        if (!empty($this->icache['message'])) {
-            if (($headers = $this->icache['message']) && $headers->uid == $uid) {
+        if (!empty($this->icache['message']) && ($headers = $this->icache['message'])) {
+            // Make sure the folder and UID is what we expect.
+            // In case when the same process works with folders that are personal
+            // and shared two folders can contain the same UIDs.
+            if ($headers->uid == $uid && $headers->folder == $folder) {
                 return $headers;
             }
         }
@@ -3181,6 +3184,13 @@ class rcube_imap extends rcube_storage
             return 0;
         }
 
+        if ($this->get_capability('STATUS=SIZE')) {
+            $status = $this->conn->status($folder, array('SIZE'));
+            if (is_array($status) && array_key_exists('SIZE', $status)) {
+                return (int) $status['SIZE'];
+            }
+        }
+
         // On Cyrus we can use special folder annotation, which should be much faster
         if ($this->get_vendor() == 'cyrus') {
             $idx    = '/shared/vendor/cmu/cyrus-imapd/size';
@@ -3250,6 +3260,12 @@ class rcube_imap extends rcube_storage
         }
 
         $result = $this->conn->createFolder($folder, $type ? array("\\" . ucfirst($type)) : null);
+
+        // Folder creation may fail when specific special-use flag is not supported.
+        // Try to create it anyway with no flag specified (#7147)
+        if (!$result && $type) {
+            $result = $this->conn->createFolder($folder);
+        }
 
         // try to subscribe it
         if ($result) {
@@ -4367,10 +4383,17 @@ class rcube_imap extends rcube_storage
      */
     protected function sort_folder_specials($folder, &$list, &$specials, &$out)
     {
-        foreach ($list as $key => $name) {
+        $count = count($list);
+
+        for ($i = 0; $i < $count; $i++) {
+            $name = $list[$i];
+            if ($name === null) {
+                continue;
+            }
+
             if ($folder === null || strpos($name, $folder.$this->delimiter) === 0) {
                 $out[] = $name;
-                unset($list[$key]);
+                $list[$i] = null;
 
                 if (!empty($specials) && ($found = array_search($name, $specials)) !== false) {
                     unset($specials[$found]);
@@ -4378,8 +4401,6 @@ class rcube_imap extends rcube_storage
                 }
             }
         }
-
-        reset($list);
     }
 
     /**
